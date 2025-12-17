@@ -18,9 +18,11 @@ export interface TextItem {
 export interface Paragraph {
     type: 'paragraph';
     text: string;
+    lines: TextItem[][]; // Array of lines (each line is array of items)
     x: number;
     y: number;
     width: number;
+    height: number; // Computed height
     fontSize: number;
     fontFamily: string;
     fontWeight: string | number;
@@ -28,6 +30,7 @@ export interface Paragraph {
     color?: string; // New
     letterSpacing?: number;
     lineHeight?: number;
+    textAlign?: 'LEFT' | 'CENTER' | 'RIGHT' | 'JUSTIFIED';
 }
 
 export function groupTextItems(items: TextItem[]): Paragraph[] {
@@ -44,18 +47,22 @@ export function groupTextItems(items: TextItem[]): Paragraph[] {
     const paragraphs: Paragraph[] = [];
     let currentPara: Paragraph | null = null;
     let lastItem: TextItem | null = null;
+    let currentLine: TextItem[] = [];
 
     for (const item of sorted) {
         if (!item.str.trim()) continue; // Skip empty whitespace items
 
         if (!currentPara) {
             // Start new paragraph
+            currentLine = [item];
             currentPara = {
                 type: 'paragraph',
                 text: item.str,
+                lines: [currentLine],
                 x: item.x,
                 y: item.y,
                 width: item.width, // Initial width
+                height: item.height, // Initial
                 fontSize: item.fontSize,
                 fontFamily: item.fontFamily,
                 fontWeight: item.fontWeight,
@@ -135,21 +142,28 @@ export function groupTextItems(items: TextItem[]): Paragraph[] {
                 const currentRight = item.x + item.width;
                 const startX = currentPara.x;
                 currentPara.width = Math.max(currentPara.width, currentRight - startX);
+
+                // Update active line array
+                currentPara.lines[currentPara.lines.length - 1].push(item);
             } else {
                 // New Line
                 currentPara.text += (item.str.startsWith(' ') ? '' : ' ') + item.str;
                 currentPara.width = Math.max(currentPara.width, item.width);
+                currentPara.lines.push([item]);
             }
             lastItem = item;
         } else {
             // End current
             paragraphs.push(currentPara);
+            currentLine = [item];
             currentPara = {
                 type: 'paragraph',
                 text: item.str,
+                lines: [currentLine],
                 x: item.x,
                 y: item.y,
                 width: item.width,
+                height: item.height,
                 fontSize: item.fontSize,
                 fontFamily: item.fontFamily,
                 fontWeight: item.fontWeight,
@@ -164,6 +178,78 @@ export function groupTextItems(items: TextItem[]): Paragraph[] {
 
     if (currentPara) {
         paragraphs.push(currentPara);
+    }
+
+    // Post-Processing: Calculate Alignment, Line Height, and refined Width
+    for (const para of paragraphs) {
+        // We need to re-analyze the lines within the paragraph text? 
+        // Actually, we lost the individual line positions in the simple string concatenation.
+        // To do this accurately strictly for "Competitor Level", we should have stored the 'lines' in the paragraph.
+        // Refactoring Paragraph to store 'lines' is risky right now but necessary for Alignment/LineHeight.
+        // ALTERNATIVE: Use the data we have.
+        // We have 'height' of the bounding box? No, we have width. height is unknown (auto).
+
+        // Let's rely on basic heuristics or stick to "Left" if we can't be sure?
+        // User wants "1.8 Text Alignment".
+        // To detect alignment, we need to know the x-start of each line relative to the paragraph bounds.
+        // Since we flattened to string, we can't do this PERFECTLY on the 'paragraphs' array alone without rewriting the grouper to store lines.
+
+        // DECISION: Rewrite Grouper to accumulate `lines: TextItem[]` instead of just string.
+        // This allows correct Line Height calc (avg delta y) and Alignment.
+        if (para.lines.length > 1) {
+            // Calculate Average Line Height (Y delta)
+            let totalYDiff = 0;
+            let diffCount = 0;
+            for (let i = 0; i < para.lines.length - 1; i++) {
+                // Compare Y of first item in line i vs line i+1
+                const l1 = para.lines[i][0];
+                const l2 = para.lines[i + 1][0];
+                const diff = l1.y - l2.y; // PDF Y is bottom-up, so top line > bottom line
+                if (diff > 0) {
+                    totalYDiff += diff;
+                    diffCount++;
+                }
+            }
+            if (diffCount > 0) {
+                para.lineHeight = totalYDiff / diffCount;
+            }
+
+            // Detect Alignment
+            // Check start positions and end positions relative to bbox
+            // Left: all starts roughly same (para.x)
+            // Center: (bbox.width - line.width) / 2 approx equal to line.x - para.x
+            // Right: all ends roughly same (para.right)
+
+            let isCentered = true;
+            let isRight = true;
+            let isJustified = true; // Harder to detect without strict bounds
+
+            for (const line of para.lines) {
+                const first = line[0];
+                const last = line[line.length - 1];
+                const lineWidth = (last.x + last.width) - first.x;
+                const lineLeft = first.x;
+                const lineRight = last.x + last.width;
+                const paraRight = para.x + para.width;
+
+                // Check Left (Default) - if variance > threshold, not left
+                if (Math.abs(lineLeft - para.x) > 5) {
+                    // Not strictly left aligned
+                }
+
+                // Check Center
+                const centerOffset = (para.width - lineWidth) / 2;
+                const actualOffset = lineLeft - para.x;
+                if (Math.abs(centerOffset - actualOffset) > 5) isCentered = false;
+
+                // Check Right
+                if (Math.abs(paraRight - lineRight) > 5) isRight = false;
+            }
+
+            if (isCentered) para.textAlign = 'CENTER';
+            else if (isRight) para.textAlign = 'RIGHT';
+            else para.textAlign = 'LEFT'; // Fallback
+        }
     }
 
     return paragraphs;

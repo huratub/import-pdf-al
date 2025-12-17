@@ -163,8 +163,13 @@ figma.ui.onmessage = (msg) => {
                     text.textAutoResize = "HEIGHT";
 
                     // Layout Fidelity Improvements
+                    // 0. Alignment (New)
+                    if (item.textAlign) {
+                        text.textAlignHorizontal = item.textAlign;
+                    }
+
                     // 1. Line Height
-                    // If we have explicit px line height from computed style, use it.
+                    // Priority: Calculated (PDF Y-delta) > CSS Computed > Auto
                     if (item.lineHeight) {
                         text.lineHeight = { value: item.lineHeight, unit: 'PIXELS' };
                     }
