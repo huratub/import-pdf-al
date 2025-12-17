@@ -86,9 +86,21 @@ figma.ui.onmessage = (msg) => {
                     text.x = item.x;
                     text.y = data.height - item.y - item.fontSize;
 
-                    // Box Control (Auto Width is default)
-                    // If we want wrapping, we'd set width.
-                    // text.resize(item.width, text.height); 
+                    // Box Control
+                    // To match "original size", we set the width to the calculated max width of the paragraph
+                    // and allow the height to grow automatically.
+                    // This prevents "infinite single line" issues and ensures wrapping matches PDF roughly.
+                    text.resize(item.width, item.fontSize * 1.5); // Initial resize (height is dummy, will auto)
+                    text.textAutoResize = "HEIGHT";
+
+                    // Layout Fidelity Improvements
+                    // 1. Line Height: Use the generic 1.2 or the one from PDF if we could get it.
+                    // We calculated it in grouper as fontSize * 1.2.
+                    text.lineHeight = { value: item.lineHeight, unit: 'PIXELS' };
+
+                    // 2. Letter Spacing: PDF text is often tighter than Figma's Inter.
+                    // Apply a small negative tracking to reduce line-wrap probability.
+                    text.letterSpacing = { value: -0.5, unit: 'PERCENT' };
 
                     frame.appendChild(text);
                 }

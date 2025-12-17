@@ -50,7 +50,7 @@ export function groupTextItems(items: TextItem[]): Paragraph[] {
                 text: item.str,
                 x: item.x,
                 y: item.y,
-                width: item.width,
+                width: item.width, // Initial width
                 fontSize: item.fontSize,
                 fontFamily: item.fontFamily,
                 fontWeight: item.fontWeight,
@@ -76,7 +76,9 @@ export function groupTextItems(items: TextItem[]): Paragraph[] {
         const isNextLine = verticalGap > 0 && verticalGap < (item.fontSize * 2.5); // Max 2.5x line height gap
 
         // 3. Horizontal Alignment (roughly same Left align)
-        const alignedLeft = Math.abs(item.x - currentPara.x) < 10;
+        // Loosen horizontal alignment slightly to handle hanging punctuation or minor drifts
+        // But stricter than "separate column". 
+        const alignedLeft = Math.abs(item.x - currentPara.x) < 20;
 
         // 4. Same Line (continuation)
         const sameLine = Math.abs(item.y - (lastItem?.y || 0)) < 2; // Tolerance for float errors
@@ -88,12 +90,22 @@ export function groupTextItems(items: TextItem[]): Paragraph[] {
                 // Simple heuristic: if gap > charWidth/2, add space.
                 // For now, just add space if not present.
                 currentPara.text += (item.str.startsWith(' ') ? '' : ' ') + item.str;
-                currentPara.width += item.width; // Rough approx
+                // Update width: Current line extends further?
+                // Since we don't track the "cursor x" easily for the aggregated line without font metrics,
+                // we just sum widths roughly for same-line appends. 
+                // A better approach for "same line" is item.x + item.width - currentPara.x
+                const currentRight = item.x + item.width;
+                const startX = currentPara.x;
+                currentPara.width = Math.max(currentPara.width, currentRight - startX);
             } else {
                 // New Line
                 currentPara.text += '\n' + item.str;
-                // Update Y to match the top-most line? No, Y usually denotes the start position.
-                // Keep the Y of the first line as the Paragraph Y for Figma (Top-Left) logic later.
+                // Update Layout Width: This line might be wider than the first line
+                // item.width is the width of this new chunk. 
+                // Since alignedLeft is true, item.x is roughly currentPara.x
+                // So effective width is approx item.width.
+                // We take the max of known widths to define the bounding box.
+                currentPara.width = Math.max(currentPara.width, item.width);
             }
             lastItem = item;
         } else {
