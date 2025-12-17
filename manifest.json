@@ -1,0 +1,17 @@
+{
+  "name": "PDF Importer (Editable)",
+  "id": "pdf-importer-editable",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "ui": "dist/index.html",
+  "capabilities": [],
+  "enableProposedApi": false,
+  "editorType": [
+    "figma"
+  ],
+  "networkAccess": {
+    "allowedDomains": [
+        "https://cdnjs.cloudflare.com" 
+    ]
+  }
+}

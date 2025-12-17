@@ -1,0 +1,94 @@
+:root {
+  --color-brand: #18A0FB;
+  --color-brand-hover: #0D8DE3;
+  --color-bg: var(--figma-color-bg, #FFFFFF);
+  --color-text: var(--figma-color-text, #333333);
+  --color-text-secondary: var(--figma-color-text-secondary, #B3B3B3);
+  --color-border: var(--figma-color-border, #E5E5E5);
+  --color-bg-hover: var(--figma-color-bg-hover, #F5F5F5);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden; /* Plugin UI usually fixed */
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  padding: 0 12px;
+  height: 32px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+button.primary {
+  background-color: var(--color-brand);
+  color: white;
+}
+
+button.primary:hover {
+  background-color: var(--color-brand-hover);
+}
+
+button.secondary {
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+button.secondary:hover {
+  border-color: var(--color-text);
+}
+
+.dropzone {
+  border: 2px dashed var(--color-border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  margin: 24px;
+  transition: border-color 0.2s;
+  color: var(--color-text-secondary);
+}
+
+.dropzone.active {
+  border-color: var(--color-brand);
+  background-color: var(--color-bg-hover);
+}
+
+h1, h2, h3 {
+  margin: 0;
+  font-weight: 600;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  height: 40px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.layout-col {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
