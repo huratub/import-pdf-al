@@ -7,8 +7,11 @@ export interface TextItem {
     height: number;
     fontSize: number;
     fontFamily: string;
-    fontWeight: number;
-    isItalic: boolean;
+    fontWeight: string | number; // allow 'bold' or numeric
+    fontStyle: string; // 'italic', 'normal'
+    color?: string; // New: Hex/RGB string
+    letterSpacing?: number; // In pixels
+    lineHeight?: number; // In pixels
     transform: number[];
 }
 
@@ -20,9 +23,11 @@ export interface Paragraph {
     width: number;
     fontSize: number;
     fontFamily: string;
-    fontWeight: number;
-    isItalic: boolean;
-    lineHeight: number;
+    fontWeight: string | number;
+    fontStyle: string;
+    color?: string; // New
+    letterSpacing?: number;
+    lineHeight?: number;
 }
 
 export function groupTextItems(items: TextItem[]): Paragraph[] {
@@ -54,8 +59,10 @@ export function groupTextItems(items: TextItem[]): Paragraph[] {
                 fontSize: item.fontSize,
                 fontFamily: item.fontFamily,
                 fontWeight: item.fontWeight,
-                isItalic: item.isItalic,
-                lineHeight: item.fontSize * 1.2
+                fontStyle: item.fontStyle,
+                color: item.color,
+                letterSpacing: item.letterSpacing,
+                lineHeight: item.lineHeight
             };
             lastItem = item;
             continue;
@@ -67,7 +74,8 @@ export function groupTextItems(items: TextItem[]): Paragraph[] {
             item.fontFamily === currentPara.fontFamily &&
             Math.abs(item.fontSize - currentPara.fontSize) < 1 &&
             item.fontWeight === currentPara.fontWeight &&
-            item.isItalic === currentPara.isItalic;
+            item.fontStyle === currentPara.fontStyle &&
+            item.color === currentPara.color; // Group by color too
 
         // 2. Vertical Proximity (Line Spacing)
         // PDF Y is bottom-up. Next line has LOWER Y.
@@ -77,11 +85,14 @@ export function groupTextItems(items: TextItem[]): Paragraph[] {
 
         // 3. Horizontal Alignment (roughly same Left align)
         // Loosen horizontal alignment slightly to handle hanging punctuation or minor drifts
-        // But stricter than "separate column". 
+        // But stricter than "separate column".
         const alignedLeft = Math.abs(item.x - currentPara.x) < 20;
 
         // 4. Same Line (continuation)
-        const sameLine = Math.abs(item.y - (lastItem?.y || 0)) < 2; // Tolerance for float errors
+        // BUG FIX: Large numbers ("0", "3") split because hardcoded 2px tolerance was too small.
+        // Use relative tolerance based on font size.
+        const verticalTolerance = Math.max(2, item.fontSize * 0.25);
+        const sameLine = Math.abs(item.y - (lastItem?.y || 0)) < verticalTolerance;
 
         if (sameStyle && ((isNextLine && alignedLeft) || sameLine)) {
             // Append to current paragraph
@@ -123,8 +134,10 @@ export function groupTextItems(items: TextItem[]): Paragraph[] {
                 fontSize: item.fontSize,
                 fontFamily: item.fontFamily,
                 fontWeight: item.fontWeight,
-                isItalic: item.isItalic,
-                lineHeight: item.fontSize * 1.2
+                fontStyle: item.fontStyle,
+                color: item.color,
+                letterSpacing: item.letterSpacing,
+                lineHeight: item.lineHeight
             };
             lastItem = item;
         }

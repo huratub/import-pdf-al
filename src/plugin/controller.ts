@@ -48,21 +48,90 @@ figma.ui.onmessage = (msg) => {
 
             if (data.svg) {
                 try {
+                    // Pass A: High Fidelity SVG
                     const svgNode = figma.createNodeFromSvg(data.svg);
-                    svgNode.name = "Vector Graphics";
+                    svgNode.name = "Vector Graphics (Hi-Fi)";
                     frame.appendChild(svgNode);
                 } catch (e) {
-                    console.error("Failed to create SVG node", e);
+                    console.warn("High fidelity SVG failed, trying fallback...", e);
+
+                    // Pass B: Sanitized SVG
+                    if (data.svgSanitized) {
+                        try {
+                            const sanitizedNode = figma.createNodeFromSvg(data.svgSanitized);
+                            sanitizedNode.name = "Vector Graphics (Sanitized)";
+                            frame.appendChild(sanitizedNode);
+                        } catch (e2) {
+                            console.error("Sanitized SVG also failed", e2);
+                        }
+                    }
                 }
             }
 
             // Create Text on top
             // We need to preload common fonts. In a real app we'd map PDF fonts to Figma fonts.
             // For MVP, we load Inter (Regular, Bold).
-            await Promise.all([
-                figma.loadFontAsync({ family: "Inter", style: "Regular" }),
-                figma.loadFontAsync({ family: "Inter", style: "Bold" })
-            ]);
+            // 2. Preload Fonts
+            // We blindly try to load the fonts detected in the PDF.
+            // If they fail, we fallback to Inter.
+            const uniqueFontFamilies = new Set<string>(data.fonts || []);
+            uniqueFontFamilies.add("Inter"); // Always needed for fallback
+
+            const fontLoadPromises: Promise<void>[] = [];
+
+            // Helper to get Figma Style Name from weight/style
+            const getStyleName = (weight: string | number, style: string) => {
+                const isBold = weight === 'bold' || (typeof weight === 'number' && weight >= 700);
+                const isItalic = style === 'italic';
+                if (isBold && isItalic) return "Bold Italic";
+                if (isBold) return "Bold";
+                if (isItalic) return "Italic";
+                return "Regular";
+            };
+
+            // We need to load specific {Family, Style} pairs.
+            // Since we don't know exactly which combinations exist, let's load
+            // the combinations we *see* in the items. 
+            // Better: Iterate items and collect required {Family, Style} pairs.
+            const requiredFonts = new Set<string>(); // "Family|Style"
+            data.items.forEach((item: any) => {
+                const style = getStyleName(item.fontWeight, item.fontStyle);
+                requiredFonts.add(`${item.fontFamily}|${style}`);
+                requiredFonts.add(`Inter|${style}`); // Fallback
+            });
+
+            const loadedFonts = new Set<string>();
+            const missingFonts = new Set<string>();
+
+            const loadFontSafe = async (family: string, style: string) => {
+                const id = `${family}|${style}`;
+                if (loadedFonts.has(id)) return;
+                try {
+                    await figma.loadFontAsync({ family, style });
+                    loadedFonts.add(id);
+                } catch (e) {
+                    missingFonts.add(family);
+                    // Try to load Inter fallback for this style
+                    try {
+                        await figma.loadFontAsync({ family: "Inter", style });
+                        loadedFonts.add(`Inter|${style}`);
+                    } catch (e2) {
+                        // Fallback completely to Inter Regular
+                        await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+                        loadedFonts.add(`Inter|Regular`);
+                    }
+                }
+            };
+
+            for (const fontId of requiredFonts) {
+                const [family, style] = fontId.split('|');
+                await loadFontSafe(family, style);
+            }
+
+            if (missingFonts.size > 0) {
+                console.warn("Missing Fonts:", Array.from(missingFonts).join(", "));
+                figma.notify(`Missing fonts: ${Array.from(missingFonts).join(", ")}. Using Inter fallback.`, { timeout: 4000 });
+            }
 
             for (const item of data.items) {
                 if (item.type === 'paragraph' && item.text.trim().length > 0) {
@@ -71,36 +140,58 @@ figma.ui.onmessage = (msg) => {
 
                     // Style
                     text.fontSize = item.fontSize;
-                    if (item.fontWeight >= 700) {
-                        text.fontName = { family: "Inter", style: "Bold" };
+
+                    // Font Loading Logic
+                    const styleName = getStyleName(item.fontWeight, item.fontStyle);
+                    const family = item.fontFamily;
+
+                    if (loadedFonts.has(`${family}|${styleName}`)) {
+                        text.fontName = { family, style: styleName };
+                    } else if (loadedFonts.has(`Inter|${styleName}`)) {
+                        text.fontName = { family: "Inter", style: styleName };
+                    } else {
+                        text.fontName = { family: "Inter", style: "Regular" };
                     }
 
                     // Coordinate Mapping
-                    // Item.y is the BOTTOM of the first line (PDF convention usually).
-                    // Or depending on grouper, it might be the top?
-                    // The grouper reserved the 'y' of the FIRST line found.
-                    // In PDF, the first line is highest Y.
-                    // So item.y is the Baseline of the first line.
                     // figmaY = (pageHeight - item.y) - fontSize (roughly to get Top-Left).
-
                     text.x = item.x;
                     text.y = data.height - item.y - item.fontSize;
 
                     // Box Control
-                    // To match "original size", we set the width to the calculated max width of the paragraph
-                    // and allow the height to grow automatically.
-                    // This prevents "infinite single line" issues and ensures wrapping matches PDF roughly.
-                    text.resize(item.width, item.fontSize * 1.5); // Initial resize (height is dummy, will auto)
+                    text.resize(item.width, item.fontSize * 1.5);
                     text.textAutoResize = "HEIGHT";
 
                     // Layout Fidelity Improvements
-                    // 1. Line Height: Use the generic 1.2 or the one from PDF if we could get it.
-                    // We calculated it in grouper as fontSize * 1.2.
-                    text.lineHeight = { value: item.lineHeight, unit: 'PIXELS' };
+                    // 1. Line Height
+                    // If we have explicit px line height from computed style, use it.
+                    if (item.lineHeight) {
+                        text.lineHeight = { value: item.lineHeight, unit: 'PIXELS' };
+                    }
 
-                    // 2. Letter Spacing: PDF text is often tighter than Figma's Inter.
-                    // Apply a small negative tracking to reduce line-wrap probability.
-                    text.letterSpacing = { value: -0.5, unit: 'PERCENT' };
+                    // 2. Letter Spacing
+                    // Computed style gives px. Figma uses pixels (or %).
+                    if (item.letterSpacing) {
+                        text.letterSpacing = { value: item.letterSpacing, unit: 'PIXELS' };
+                    } else {
+                        // Default tight tracking if none found 
+                        text.letterSpacing = { value: -0.5, unit: 'PERCENT' };
+                    }
+
+                    // 3. Color
+                    if (item.color) {
+                        try {
+                            const rgbMatch = item.color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+                            if (rgbMatch) {
+                                const r = parseInt(rgbMatch[1]) / 255;
+                                const g = parseInt(rgbMatch[2]) / 255;
+                                const b = parseInt(rgbMatch[3]) / 255;
+                                text.fills = [{ type: 'SOLID', color: { r, g, b } }];
+                            }
+                        } catch (e) {
+                            // Keep default black
+                        }
+                    }
 
                     frame.appendChild(text);
                 }

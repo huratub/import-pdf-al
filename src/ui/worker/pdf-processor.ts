@@ -8,9 +8,12 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs
 export interface PageData {
     width: number;
     height: number;
-    items: Paragraph[]; // Changed to Paragraphs
-    svg?: string; // Vector content
-    image?: Uint8Array; // Raster fallback
+    items: Paragraph[];
+    links?: Array<{ x: number, y: number, w: number, h: number, url: string }>;
+    svg?: string;
+    svgSanitized?: string;
+    image?: Uint8Array;
+    fonts?: string[]; // Unique font families
 }
 
 export class PDFProcessor {
@@ -31,43 +34,128 @@ export class PDFProcessor {
 
         // 1. Extract Text
         const textContent = await page.getTextContent();
-        // styles is a property of textContent containing font info key-value pairs
-        const styles = textContent.styles;
+
+        // Use RenderTextLayer to extract correct styles (Color, Bold, Italic) from CSS
+        const styleMap = new Map<number, {
+            color: string,
+            weight: string | number,
+            style: string,
+            family: string,
+            fontSize: number,
+            lineHeight: number,
+            letterSpacing: number
+        }>();
+
+        const uniqueFonts = new Set<string>();
+
+        try {
+            const container = document.createElement('div');
+            container.style.display = 'none'; // hidden but in DOM
+            document.body.appendChild(container);
+
+            // Check availability of renderTextLayer
+            const renderTextLayer = (pdfjsLib as any).renderTextLayer;
+            if (renderTextLayer) {
+                const renderTask = renderTextLayer({
+                    textContentSource: textContent,
+                    container,
+                    viewport,
+                    textDivs: []
+                });
+                await renderTask.promise;
+
+                const spans = Array.from(container.querySelectorAll('span'));
+                spans.forEach((span, index) => {
+                    const cs = window.getComputedStyle(span);
+
+                    // FontSize
+                    const fontSizePx = parseFloat(cs.fontSize) || 0;
+
+                    // LineHeight
+                    let lineHeightPx = fontSizePx * 1.2; // default normal
+                    if (cs.lineHeight && cs.lineHeight !== 'normal') {
+                        lineHeightPx = parseFloat(cs.lineHeight);
+                    }
+
+                    // LetterSpacing
+                    let letterSpacingPx = 0;
+                    if (cs.letterSpacing && cs.letterSpacing !== 'normal') {
+                        letterSpacingPx = parseFloat(cs.letterSpacing);
+                    }
+
+                    const family = cs.fontFamily ? cs.fontFamily.replace(/['"]/g, '') : 'Inter';
+                    uniqueFonts.add(family);
+
+                    styleMap.set(index, {
+                        color: cs.color || 'rgb(0,0,0)',
+                        weight: cs.fontWeight || '400',
+                        style: cs.fontStyle || 'normal',
+                        family: family,
+                        fontSize: fontSizePx,
+                        lineHeight: lineHeightPx,
+                        letterSpacing: letterSpacingPx
+                    });
+                });
+            }
+            document.body.removeChild(container);
+        } catch (e) {
+            console.warn("Text Layer style extraction failed", e);
+        }
 
         const rawItems: TextItem[] = [];
-        for (const item of textContent.items as any[]) {
-            // Resolve font data
-            let fontData = { name: 'Inter', weight: 400, italic: false };
-            if (item.fontName) {
-                try {
-                    const styleObj = styles[item.fontName];
-                    if (styleObj) {
-                        fontData.name = styleObj.fontFamily;
-                        // basic heuristic for weight
-                        if (styleObj.fontFamily.toLowerCase().includes('bold')) fontData.weight = 700;
-                        if (styleObj.fontFamily.toLowerCase().includes('medium')) fontData.weight = 500;
-                        // italics
-                        fontData.italic = styleObj.fontFamily.toLowerCase().includes('italic');
-                    }
-                } catch (e) {
-                    // fallback
-                }
+        const items = textContent.items as any[];
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const domStyles = styleMap.get(i);
+
+            // Fallbacks
+            let weight: string | number = 400;
+            let fontStyle = 'normal';
+            let color = domStyles?.color || 'rgb(0, 0, 0)';
+            let fontFamily = 'Inter';
+            let extractedFontSize = 0;
+            let extractedLineHeight = 0;
+            let extractedLetterSpacing = 0;
+
+            if (domStyles) {
+                weight = domStyles.weight;
+                fontStyle = domStyles.style;
+                fontFamily = domStyles.family;
+                extractedFontSize = domStyles.fontSize;
+                extractedLineHeight = domStyles.lineHeight;
+                extractedLetterSpacing = domStyles.letterSpacing;
             }
 
-            // Calculate font size from transform (scaleY)
-            // transform: [scaleX, skewX, skewY, scaleY, x, y]
+            // Calculate geometric font size as backup or verification
             const tx = item.transform;
-            const fontSize = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3]);
+            const geoFontSize = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3]);
+
+            // Prefer the computed font size if it's close to geometry, otherwise geometry might be more accurate for pure scale.
+            // PDF.js text layer sometimes scales transforms. Let's trust geometric for "Size" but computed for "Styles".
+            // Actually, computed fontSize usually reflects the viewport scale.
+            // If viewport scale is 1.0, extractedFontSize should be close to geoFontSize.
+            // Let's stick to geoFontSize for the raw size to be safe with zoom levels,
+            // BUT use domStyles for the *relative* properties like LineHeight if needed.
+            // Wait, the user wants "stop guessing". Computed Style IS the truth of how PDF.js renders it.
+            // But we rendered with scale 1.0 viewport. So it should match.
+            const finalFontSize = extractedFontSize > 0 ? extractedFontSize : geoFontSize;
+
+            // Font Family Cleaning (remove quotes)
+            fontFamily = fontFamily.replace(/['"]/g, '');
 
             rawItems.push({
                 type: 'text',
                 str: item.str,
-                x: tx[4],
+                x: tx[4], // We trust geometric position from getTextContent
                 y: tx[5],
-                fontSize: Math.round(fontSize),
-                fontFamily: fontData.name,
-                fontWeight: fontData.weight,
-                isItalic: fontData.italic,
+                fontSize: Math.round(finalFontSize),
+                fontFamily: fontFamily,
+                fontWeight: weight,
+                fontStyle: fontStyle,
+                color: color,
+                lineHeight: extractedLineHeight,
+                letterSpacing: extractedLetterSpacing,
                 width: item.width,
                 height: item.height,
                 transform: tx
@@ -121,21 +209,75 @@ export class PDFProcessor {
 
         // 4. Extract Vector (SVG) - Best Effort
         let svgString = '';
+        let svgSanitizedString = '';
         try {
             const operatorList = await page.getOperatorList();
             const svgGraphics = new pdfjsLib.SVGGraphics(page.commonObjs, page.objs);
             const svgElement = (await svgGraphics.getSVG(operatorList, viewport)) as unknown as SVGElement;
             svgString = svgElement.outerHTML;
+
+            // Pass B: Sanitized SVG (Clone and Strip)
+            try {
+                const clone = svgElement.cloneNode(true) as SVGElement;
+
+                // Remove Figma-breaking tags
+                const badTags = ['filter', 'mask', 'clipPath', 'foreignObject', 'symbol', 'use'];
+                badTags.forEach(tag => {
+                    const elements = clone.querySelectorAll(tag);
+                    elements.forEach(el => el.remove());
+                });
+
+                // Remove problematic attributes from ALL elements
+                const allElements = clone.querySelectorAll('*');
+                allElements.forEach(el => {
+                    el.removeAttribute('filter');
+                    el.removeAttribute('mask');
+                    el.removeAttribute('clip-path');
+                    el.removeAttribute('mix-blend-mode');
+                    // Ensure opacity is simple? (Optional, sometimes group opacity + fill opacity causes issues)
+                });
+
+                svgSanitizedString = clone.outerHTML;
+            } catch (e) {
+                console.warn("SVG Sanitization failed", e);
+            }
+
         } catch (e) {
             console.warn("SVG Extraction failed, falling back to raster image only.", e);
+        }
+
+        // 5. Extract Hyperlinks
+        const links: Array<{ x: number, y: number, w: number, h: number, url: string }> = [];
+        try {
+            const annotations = await page.getAnnotations({ intent: 'display' });
+            for (const annot of annotations) {
+                if (annot.subtype === 'Link' && annot.url && annot.rect) {
+                    // annot.rect is [xLo, yLo, xHi, yHi] in PDF PDF coordinates (bottom-up)
+                    // We need to convert to Viewport coordinates (which matches our item positions)
+                    const rect = viewport.convertToViewportRectangle(annot.rect);
+                    // Viewport rect is [xMin, yMin, xMax, yMax] (top-down usually, but let's normalize)
+                    // Actually convertToViewportRectangle returns [xMin, yMin, xMax, yMax]
+                    const x = Math.min(rect[0], rect[2]);
+                    const y = Math.min(rect[1], rect[3]);
+                    const w = Math.abs(rect[2] - rect[0]);
+                    const h = Math.abs(rect[3] - rect[1]);
+
+                    links.push({ x, y, w, h, url: annot.url });
+                }
+            }
+        } catch (e) {
+            console.warn("Link extraction failed", e);
         }
 
         return {
             width: viewport.width,
             height: viewport.height,
             items: paragraphs,
+            links,
             svg: svgString,
-            image: imageBytes
+            svgSanitized: svgSanitizedString,
+            image: imageBytes,
+            fonts: Array.from(uniqueFonts)
         };
     }
 }
