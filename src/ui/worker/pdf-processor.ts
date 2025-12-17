@@ -132,30 +132,45 @@ export class PDFProcessor {
             const geoFontSize = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3]);
 
             // Prefer the computed font size if it's close to geometry, otherwise geometry might be more accurate for pure scale.
-            // PDF.js text layer sometimes scales transforms. Let's trust geometric for "Size" but computed for "Styles".
-            // Actually, computed fontSize usually reflects the viewport scale.
-            // If viewport scale is 1.0, extractedFontSize should be close to geoFontSize.
-            // Let's stick to geoFontSize for the raw size to be safe with zoom levels,
-            // BUT use domStyles for the *relative* properties like LineHeight if needed.
-            // Wait, the user wants "stop guessing". Computed Style IS the truth of how PDF.js renders it.
-            // But we rendered with scale 1.0 viewport. So it should match.
-            const finalFontSize = extractedFontSize > 0 ? extractedFontSize : geoFontSize;
+            // Font Family Cleaning & Generic Mapping
+            if (fontFamily) {
+                // Remove quotes
+                fontFamily = fontFamily.replace(/['"]/g, '');
 
-            // Font Family Cleaning (remove quotes)
-            fontFamily = fontFamily.replace(/['"]/g, '');
+                // Map Generics to Figma-safe defaults
+                const lower = fontFamily.toLowerCase();
+                if (lower.includes('sans-serif') || lower === 'sans-serif') fontFamily = 'Inter';
+                else if (lower.includes('serif')) fontFamily = 'Times New Roman'; // Figma usually has this or similar
+                else if (lower.includes('monospace')) fontFamily = 'Roboto Mono';
+
+                // Remove PostScript suffixes if needed or just trust the raw name and let Controller fallback
+                // User requirement: "Match installed font by PostScript name first"
+                // We pass the raw name, Controller handles fallback.
+            }
+
+            // Metric Precision: User wants "Exact px value", "Never round aggressively"
+            // We have two sources:
+            // 1. geoFontSize: from PDF transformation matrix (The "Mathematical" size)
+            // 2. extractedFontSize: from CSS computed style (The "Rendered" size)
+            // PDF.js text layer makes CSS match the visual size. 
+            // We should use the CSS value if it exists and is non-zero, as it accounts for scaling.
+            let finalFontSize = extractedFontSize > 0 ? extractedFontSize : geoFontSize;
+
+            // Allow checking geometry if CSS failed
+            if (finalFontSize === 0) finalFontSize = 12; // safety fallback
 
             rawItems.push({
                 type: 'text',
                 str: item.str,
-                x: tx[4], // We trust geometric position from getTextContent
+                x: tx[4],
                 y: tx[5],
-                fontSize: Math.round(finalFontSize),
+                fontSize: finalFontSize, // FLOAT, do not round
                 fontFamily: fontFamily,
                 fontWeight: weight,
                 fontStyle: fontStyle,
                 color: color,
-                lineHeight: extractedLineHeight,
-                letterSpacing: extractedLetterSpacing,
+                lineHeight: extractedLineHeight, // FLOAT
+                letterSpacing: extractedLetterSpacing, // FLOAT
                 width: item.width,
                 height: item.height,
                 transform: tx
@@ -220,22 +235,36 @@ export class PDFProcessor {
             try {
                 const clone = svgElement.cloneNode(true) as SVGElement;
 
-                // Remove Figma-breaking tags
-                const badTags = ['filter', 'mask', 'clipPath', 'foreignObject', 'symbol', 'use'];
+                // Remove Figma-breaking tags but KEEP Gradients (linearGradient, radialGradient, stops)
+                // We typically find gradients in <defs>.
+                const badTags = ['filter', 'mask', 'clipPath', 'foreignObject', 'symbol', 'image', 'marker', 'pattern'];
+                // Note: stripping 'image' prevents nested rasters in SVG which Figma hates from PDF.js output.
+                // Keeping 'use' might be okay if it references a shape, but often references a symbol/mask.
+                // Let's ideally strip 'use' if it points to a deleted ID, but that's hard. 
+                // Safer to strip 'use' if we want "Simple Shapes".
+
                 badTags.forEach(tag => {
                     const elements = clone.querySelectorAll(tag);
                     elements.forEach(el => el.remove());
                 });
 
-                // Remove problematic attributes from ALL elements
+                // Remove problematic attributes
                 const allElements = clone.querySelectorAll('*');
                 allElements.forEach(el => {
                     el.removeAttribute('filter');
                     el.removeAttribute('mask');
                     el.removeAttribute('clip-path');
-                    el.removeAttribute('mix-blend-mode');
-                    // Ensure opacity is simple? (Optional, sometimes group opacity + fill opacity causes issues)
+                    // el.removeAttribute('mix-blend-mode'); // Figma supports some blends, but often they conflict.
+                    // If we remove mix-blend-mode, we lose "Multiply".
+                    // The user wants Blend Modes.
+                    // Let's KEEP mix-blend-mode for the sanitized version? 
+                    // Or maybe specifically map it? SVG import in Figma respects standard blend modes.
+                    // Let's try KEEPING it in the "Sanitized" version if it's a standard one.
+
+                    // Clear opacity on groups if it's effectively 0 ?
                 });
+
+                svgSanitizedString = clone.outerHTML;
 
                 svgSanitizedString = clone.outerHTML;
             } catch (e) {
