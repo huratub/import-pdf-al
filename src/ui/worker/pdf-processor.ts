@@ -226,10 +226,16 @@ export class PDFProcessor {
         let svgString = '';
         let svgSanitizedString = '';
         try {
-            const operatorList = await page.getOperatorList();
-            const svgGraphics = new pdfjsLib.SVGGraphics(page.commonObjs, page.objs);
-            const svgElement = (await svgGraphics.getSVG(operatorList, viewport)) as unknown as SVGElement;
-            svgString = svgElement.outerHTML;
+            try {
+                const operatorList = await page.getOperatorList();
+                const svgGraphics = new pdfjsLib.SVGGraphics(page.commonObjs, page.objs);
+                const svgElement = (await svgGraphics.getSVG(operatorList, viewport)) as unknown as SVGElement;
+                svgString = svgElement.outerHTML;
+            } catch (e) {
+                console.warn("SVG Extraction (High Fidelity) crashed inside PDF.js - skipping vector layer.", e);
+                // Ensure we don't pass null/garbage
+                svgString = '';
+            }
 
             // Pass B: Sanitized SVG (Clone and Strip)
             try {

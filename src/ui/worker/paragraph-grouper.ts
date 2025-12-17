@@ -176,6 +176,8 @@ export function groupTextItems(items: TextItem[]): Paragraph[] {
         }
     }
 
+    console.log(`[PDFProcessor] Extracted ${paragraphs.length} paragraphs from ${items.length} raw text items.`);
+
     if (currentPara) {
         paragraphs.push(currentPara);
     }

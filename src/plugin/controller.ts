@@ -17,6 +17,15 @@ figma.ui.onmessage = (msg) => {
 
     if (msg.type === 'create-page') {
         const { index, data } = msg; // data = { width, height, items }
+        console.log(`[Controller] creating page ${index + 1}`, {
+            width: data.width,
+            height: data.height,
+            itemCount: data.items.length,
+            hasSVG: !!data.svg,
+            hasSanitizedSVG: !!data.svgSanitized,
+            hasImage: !!data.image,
+            fontCount: data.fonts?.length
+        });
 
         const frame = figma.createFrame();
         frame.name = `Page ${index + 1}`;
