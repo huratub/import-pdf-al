@@ -98,8 +98,11 @@ export function groupTextItems(items: TextItem[]): Paragraph[] {
                 const startX = currentPara.x;
                 currentPara.width = Math.max(currentPara.width, currentRight - startX);
             } else {
-                // New Line
-                currentPara.text += '\n' + item.str;
+                // New Line (Next line in the same paragraph)
+                // User Request: Join with SPACE, not \n, so text flows naturally in the box.
+                // This makes the text truly "paragraph" style (reflowable).
+                currentPara.text += (item.str.startsWith(' ') ? '' : ' ') + item.str;
+
                 // Update Layout Width: This line might be wider than the first line
                 // item.width is the width of this new chunk. 
                 // Since alignedLeft is true, item.x is roughly currentPara.x
